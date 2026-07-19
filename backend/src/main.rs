@@ -4,6 +4,7 @@ mod clients;
 mod config;
 mod db;
 mod http;
+pub mod time_blocks;
 
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
