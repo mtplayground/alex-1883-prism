@@ -5,6 +5,7 @@ pub struct Config {
     pub host: String,
     pub port: u16,
     pub database_url: String,
+    pub database_max_connections: u32,
     pub self_url: String,
     pub mctai_auth_url: String,
     pub mctai_auth_app_token: String,
@@ -18,6 +19,7 @@ impl Config {
             host: env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_owned()),
             port: read_port()?,
             database_url: required_env("DATABASE_URL")?,
+            database_max_connections: read_u32("DATABASE_MAX_CONNECTIONS", 5)?,
             self_url: env::var("SELF_URL").unwrap_or_else(|_| "http://localhost:5173".to_owned()),
             mctai_auth_url: env::var("MCTAI_AUTH_URL")
                 .unwrap_or_else(|_| "https://auth.mctai.app".to_owned()),
@@ -49,6 +51,15 @@ fn read_port() -> anyhow::Result<u16> {
             .parse()
             .map_err(|err| anyhow::anyhow!("invalid PORT value {value:?}: {err}")),
         Err(_) => Ok(8080),
+    }
+}
+
+fn read_u32(name: &str, default: u32) -> anyhow::Result<u32> {
+    match env::var(name) {
+        Ok(value) => value
+            .parse()
+            .map_err(|err| anyhow::anyhow!("invalid {name} value {value:?}: {err}")),
+        Err(_) => Ok(default),
     }
 }
 

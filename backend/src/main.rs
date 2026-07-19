@@ -1,10 +1,11 @@
 mod config;
+mod db;
 mod http;
 
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{config::Config, http::build_router};
+use crate::{config::Config, db::connect_and_migrate, http::build_router};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -12,7 +13,8 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::from_env()?;
     let address = config.socket_addr()?;
-    let router = build_router(config);
+    let db = connect_and_migrate(&config).await?;
+    let router = build_router(config, db);
     let listener = TcpListener::bind(address).await?;
 
     tracing::info!("backend listening on http://{address}");

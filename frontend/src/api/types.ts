@@ -1,5 +1,6 @@
 export interface HealthResponse {
-  status: "ok";
+  status: "ok" | "degraded";
+  database: "connected" | "unavailable";
 }
 
 export interface PublicConfigResponse {
