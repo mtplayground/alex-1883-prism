@@ -1,0 +1,108 @@
+# Architecture Plan
+
+## Shape
+
+This repo will contain a React + Tailwind single-page frontend and a Rust/Axum backend. The backend owns persistence, authentication, validation, and user scoping. The frontend talks to the backend through a small REST API client layer and keeps auth state in a shared context.
+
+Suggested layout:
+
+- `backend/`
+  - `Cargo.toml`
+  - `src/main.rs` for server bootstrap, tracing, config loading, router assembly, static health routes.
+  - `src/config.rs` for `DATABASE_URL`, `JWT_SECRET`, bind address, and allowed public origin configuration.
+  - `src/db.rs` for the sqlx PostgreSQL pool and migration runner.
+  - `src/error.rs` for shared API error responses.
+  - `src/auth/` for user model access, registration, sign-in, password hashing, JWT claims, and Axum middleware/extractors.
+  - `src/clients/` for client and personal-color models, service functions, validation, and REST handlers.
+  - `src/blocks/` for time block models, service functions, validation, and REST handlers.
+  - `migrations/` for sqlx migrations: users first, clients/personal settings next, time blocks last.
+- `frontend/`
+  - `package.json`, `vite.config.ts`, `tailwind.config.*`, `src/main.tsx`.
+  - `src/api/` for typed fetch helpers, auth header injection, and endpoint modules.
+  - `src/auth/` for auth context, route guards, sign-in, and sign-up pages.
+  - `src/clients/` for client manager state, forms, color picker, and list UI.
+  - `src/planner/` for day state, day navigation, timeline layout, block interactions, and edit forms.
+  - `src/shared/` for reusable UI primitives, validation helpers, and shared display utilities.
+- Root tooling:
+  - `.env.example` listing `DATABASE_URL`, `JWT_SECRET`, backend bind/API variables, and frontend API base URL.
+  - Formatter/lint scripts for Rust and frontend code.
+
+## Shared Types and Contracts
+
+Keep the REST contract simple and stable:
+
+- Auth:
+  - `POST /api/auth/register` creates a user, hashes the password, and returns a JWT plus user summary.
+  - `POST /api/auth/login` verifies credentials and returns the same auth payload.
+- Clients:
+  - `GET /api/clients` returns clients plus the personal-time color.
+  - `POST /api/clients`, `PATCH /api/clients/:id`, `DELETE /api/clients/:id`.
+  - `PATCH /api/settings/personal-color` updates the reserved personal category color.
+- Time blocks:
+  - `GET /api/blocks?day=YYYY-MM-DD` lists blocks for the signed-in user on one day.
+  - `POST /api/blocks` creates a block.
+  - `PATCH /api/blocks/:id` edits title, client/personal category, start/end, or day.
+  - `DELETE /api/blocks/:id` removes a block.
+
+Backend response DTOs should use serde structs and frontend TypeScript types should mirror those DTOs in `frontend/src/api/types.ts`. Use UUID identifiers, ISO `YYYY-MM-DD` dates for days, and minute-of-day integers for start/end times. Minute integers make drag, resize, snap, and validation logic easier than moving date-time strings through the UI.
+
+## Data Model
+
+- `users`
+  - `id uuid primary key`
+  - `email text unique not null`
+  - `password_hash text not null`
+  - `created_at timestamptz not null`
+  - `updated_at timestamptz not null`
+- `user_settings`
+  - `user_id uuid primary key references users(id) on delete cascade`
+  - `personal_color text not null`
+- `clients`
+  - `id uuid primary key`
+  - `user_id uuid not null references users(id) on delete cascade`
+  - `name text not null`
+  - `initials text not null`
+  - `color text not null`
+  - timestamps
+- `time_blocks`
+  - `id uuid primary key`
+  - `user_id uuid not null references users(id) on delete cascade`
+  - `day date not null`
+  - `start_minute int not null`
+  - `end_minute int not null`
+  - `title text`
+  - `client_id uuid references clients(id) on delete set null`
+  - `is_personal boolean not null default false`
+  - timestamps
+
+Validation should enforce `0 <= start_minute < end_minute <= 1440`, exactly one category choice (`is_personal` or `client_id`), client ownership, sensible color format, and short non-empty initials.
+
+## Issue Dependencies
+
+1. Project skeleton unlocks every later issue.
+2. Saved-data foundation requires the skeleton and unlocks migrations.
+3. Accounts data model depends on saved data.
+4. Sign-up depends on accounts.
+5. Sign-in and protected routes depends on sign-up.
+6. Auth screens depend on protected routes and establish frontend auth plumbing.
+7. Clients model depends on saved data and accounts.
+8. Clients API depends on clients model.
+9. Client manager depends on clients API.
+10. Time blocks model depends on saved data and clients model.
+11. Time blocks API depends on time blocks model.
+12. Day timeline depends on blocks API and client manager.
+13. Add block depends on the timeline.
+14. Move/resize/reschedule depends on add block.
+15. Edit/delete depends on add block.
+16. Day navigation depends on the timeline.
+17. End-to-end coverage depends on the complete auth, client, block, and day navigation flows.
+
+## Key Decisions
+
+- Backend is the source of truth for authorization. Every data query filters by authenticated `user_id`; IDs supplied by the client are never trusted without ownership checks.
+- Use JWT bearer auth for API calls, with frontend storage isolated behind the auth context and API client.
+- The reserved personal category is not a client row. Store its color in `user_settings` so client CRUD remains clean and time blocks can explicitly mark personal time.
+- Use minute-of-day integers in persistence and UI logic. Convert to display labels at the edge.
+- Keep timeline interaction snap logic frontend-owned, but repeat essential time validation on the backend.
+- Read public origin through proxy-aware configuration. If CORS or origin checks are added, accept the platform-provided public origin and do not gate static assets against raw internal `Host`.
+- Add Playwright end-to-end coverage only after the core flow exists, but keep testable selectors and deterministic API behavior in mind from the first UI implementation.
