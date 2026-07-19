@@ -1,6 +1,13 @@
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    Json,
+};
 use chrono::{DateTime, Utc};
-use serde::Serialize;
-use sqlx::FromRow;
+use serde::{Deserialize, Serialize};
+use sqlx::{FromRow, PgPool};
+
+use crate::{auth, http::AppState};
 
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct User {
@@ -11,4 +18,82 @@ pub struct User {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub last_seen_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UserClaims {
+    pub sub: String,
+    pub email: String,
+    pub name: Option<String>,
+    pub picture: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RegistrationResponse {
+    pub user: User,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ErrorResponse {
+    error: &'static str,
+}
+
+pub async fn register(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<RegistrationResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let claims = auth::verify_session(&headers, &state.config)
+        .await
+        .map_err(auth_error_response)?;
+
+    let user = upsert_user(&state.db, &claims).await.map_err(|err| {
+        tracing::error!("failed to upsert registered user: {err}");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "registration failed",
+            }),
+        )
+    })?;
+
+    Ok(Json(RegistrationResponse { user }))
+}
+
+async fn upsert_user(pool: &PgPool, claims: &UserClaims) -> anyhow::Result<User> {
+    sqlx::query_as::<_, User>(
+        r#"
+        INSERT INTO users (sub, email, name, picture_url)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (sub) DO UPDATE
+        SET email = EXCLUDED.email,
+            name = EXCLUDED.name,
+            picture_url = EXCLUDED.picture_url,
+            last_seen_at = NOW()
+        RETURNING sub, email, name, picture_url, created_at, updated_at, last_seen_at
+        "#,
+    )
+    .bind(&claims.sub)
+    .bind(&claims.email)
+    .bind(&claims.name)
+    .bind(&claims.picture)
+    .fetch_one(pool)
+    .await
+    .map_err(|err| anyhow::anyhow!("user upsert query failed: {err}"))
+}
+
+fn auth_error_response(error: auth::AuthError) -> (StatusCode, Json<ErrorResponse>) {
+    match error {
+        auth::AuthError::MissingSession | auth::AuthError::InvalidSession => (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "authentication required",
+            }),
+        ),
+        auth::AuthError::VerificationUnavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                error: "authentication unavailable",
+            }),
+        ),
+    }
 }
