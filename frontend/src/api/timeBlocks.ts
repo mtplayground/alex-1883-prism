@@ -1,4 +1,4 @@
-import { apiGet, apiPatch, apiPost } from "./client";
+import { apiDelete, apiGet, apiPatch, apiPost } from "./client";
 import type {
   TimeBlockListResponse,
   TimeBlockPayload,
@@ -20,4 +20,8 @@ export function updateTimeBlock(blockId: string, payload: TimeBlockPayload) {
     `/api/time-blocks/${encodeURIComponent(blockId)}`,
     payload,
   );
+}
+
+export function deleteTimeBlock(blockId: string) {
+  return apiDelete(`/api/time-blocks/${encodeURIComponent(blockId)}`);
 }
