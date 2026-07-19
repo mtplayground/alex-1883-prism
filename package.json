@@ -1,0 +1,11 @@
+{
+  "name": "alex-1883-prism",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build && cargo build --manifest-path backend/Cargo.toml",
+    "lint": "npm --prefix frontend run lint && cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings",
+    "format": "npm --prefix frontend run format && cargo fmt --manifest-path backend/Cargo.toml --all",
+    "format:check": "npm --prefix frontend run format:check && cargo fmt --manifest-path backend/Cargo.toml --all -- --check"
+  }
+}
