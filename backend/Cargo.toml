@@ -7,8 +7,9 @@ publish = false
 [dependencies]
 anyhow = "1.0"
 axum = "0.7"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 serde = { version = "1.0", features = ["derive"] }
-sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "migrate"] }
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "migrate", "chrono"] }
 tokio = { version = "1.41", features = ["macros", "rt-multi-thread", "signal", "net"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 tracing = "0.1"
