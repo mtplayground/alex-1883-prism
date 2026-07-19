@@ -1,31 +1,49 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type PointerEvent } from "react";
 
 import { ApiError } from "../api/client";
-import { getTimeBlocks } from "../api/timeBlocks";
-import type { TimeBlock } from "../api/types";
+import { getClients } from "../api/clients";
+import { createTimeBlock, getTimeBlocks } from "../api/timeBlocks";
+import type { Client, TimeBlock, TimeBlockPayload } from "../api/types";
 
 const HOUR_HEIGHT_PX = 72;
 const DAY_MINUTES = 24 * 60;
+const SNAP_MINUTES = 15;
+
+interface DraftBlock {
+  assignment: string;
+  endMinute: number;
+  isSelecting: boolean;
+  startMinute: number;
+  title: string;
+}
 
 export function DayTimeline() {
   const day = useMemo(() => todayDate(), []);
   const [blocks, setBlocks] = useState<TimeBlock[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [draft, setDraft] = useState<DraftBlock | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [pointerId, setPointerId] = useState<number | null>(null);
 
   useEffect(() => {
     let isMounted = true;
 
-    async function loadBlocks() {
+    async function loadTimelineData() {
       setIsLoading(true);
       setError(null);
 
       try {
-        const response = await getTimeBlocks(day);
+        const [blockResponse, clientResponse] = await Promise.all([
+          getTimeBlocks(day),
+          getClients(),
+        ]);
         if (!isMounted) {
           return;
         }
-        setBlocks(response.blocks);
+        setBlocks(blockResponse.blocks);
+        setClients(clientResponse.clients);
       } catch (loadError) {
         if (!isMounted) {
           return;
@@ -38,7 +56,7 @@ export function DayTimeline() {
       }
     }
 
-    void loadBlocks();
+    void loadTimelineData();
 
     return () => {
       isMounted = false;
@@ -54,6 +72,90 @@ export function DayTimeline() {
       ),
     [blocks],
   );
+
+  function handleTimelinePointerDown(
+    event: PointerEvent<HTMLDivElement>,
+  ): void {
+    if (
+      event.button !== 0 ||
+      (event.target as HTMLElement).closest("[data-time-block]")
+    ) {
+      return;
+    }
+
+    const minute = minuteFromPointer(event.currentTarget, event.clientY);
+    setPointerId(event.pointerId);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDraft({
+      assignment: "personal",
+      endMinute: clamp(minute + 60, minute + SNAP_MINUTES, DAY_MINUTES),
+      isSelecting: true,
+      startMinute: minute,
+      title: "",
+    });
+  }
+
+  function handleTimelinePointerMove(
+    event: PointerEvent<HTMLDivElement>,
+  ): void {
+    if (pointerId !== event.pointerId) {
+      return;
+    }
+
+    const minute = minuteFromPointer(event.currentTarget, event.clientY, true);
+    setDraft((current) =>
+      current?.isSelecting ? { ...current, endMinute: minute } : current,
+    );
+  }
+
+  function handleTimelinePointerUp(event: PointerEvent<HTMLDivElement>): void {
+    if (pointerId !== event.pointerId) {
+      return;
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setPointerId(null);
+    setDraft((current) => {
+      if (!current) {
+        return current;
+      }
+
+      const range = normalizedDraftRange(current);
+      return {
+        ...current,
+        endMinute: range.endMinute,
+        isSelecting: false,
+        startMinute: range.startMinute,
+      };
+    });
+  }
+
+  async function handleCreateDraft() {
+    if (!draft) {
+      return;
+    }
+
+    const payload = payloadFromDraft(day, draft);
+    if (!payload) {
+      setError("Choose a client or Personal.");
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      const response = await createTimeBlock(payload);
+      setBlocks((current) => [...current, response.block].sort(sortBlocks));
+      setDraft(null);
+    } catch (createError) {
+      setError(errorMessage(createError, "Unable to add time block."));
+    } finally {
+      setIsSaving(false);
+    }
+  }
 
   return (
     <section className="mx-auto max-w-6xl px-6 py-8">
@@ -77,6 +179,17 @@ export function DayTimeline() {
         </div>
       ) : null}
 
+      {draft && !draft.isSelecting ? (
+        <QuickCreateForm
+          clients={clients}
+          draft={draft}
+          isSaving={isSaving}
+          onCancel={() => setDraft(null)}
+          onChange={setDraft}
+          onSave={() => void handleCreateDraft()}
+        />
+      ) : null}
+
       <div className="mt-6 overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
         <div className="grid grid-cols-[72px_minmax(0,1fr)]">
           <div className="border-r border-slate-200 bg-slate-50">
@@ -92,7 +205,11 @@ export function DayTimeline() {
           </div>
 
           <div
-            className="relative bg-white"
+            className="relative cursor-crosshair bg-white"
+            onPointerDown={handleTimelinePointerDown}
+            onPointerMove={handleTimelinePointerMove}
+            onPointerCancel={handleTimelinePointerUp}
+            onPointerUp={handleTimelinePointerUp}
             style={{ height: HOUR_HEIGHT_PX * 24 }}
           >
             {HOURS.map((hour) => (
@@ -110,6 +227,7 @@ export function DayTimeline() {
               />
             ))}
 
+            {draft ? <DraftOverlay draft={draft} /> : null}
             {sortedBlocks.map((block) => (
               <TimelineBlock block={block} key={block.id} />
             ))}
@@ -117,6 +235,102 @@ export function DayTimeline() {
         </div>
       </div>
     </section>
+  );
+}
+
+function QuickCreateForm({
+  clients,
+  draft,
+  isSaving,
+  onCancel,
+  onChange,
+  onSave,
+}: {
+  clients: Client[];
+  draft: DraftBlock;
+  isSaving: boolean;
+  onCancel: () => void;
+  onChange: (draft: DraftBlock) => void;
+  onSave: () => void;
+}) {
+  const range = normalizedDraftRange(draft);
+
+  return (
+    <div className="mt-5 grid gap-4 rounded-md border border-emerald-200 bg-white p-4 shadow-sm md:grid-cols-[160px_minmax(0,1fr)_minmax(180px,220px)_auto] md:items-end">
+      <div>
+        <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
+          Time
+        </div>
+        <div className="mt-2 text-sm font-bold text-slate-950">
+          {minuteLabel(range.startMinute)} - {minuteLabel(range.endMinute)}
+        </div>
+      </div>
+
+      <label className="block">
+        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
+          Title
+        </span>
+        <input
+          className="mt-2 min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+          onChange={(event) =>
+            onChange({ ...draft, title: event.target.value })
+          }
+          type="text"
+          value={draft.title}
+        />
+      </label>
+
+      <label className="block">
+        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
+          Category
+        </span>
+        <select
+          className="mt-2 min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-950 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+          onChange={(event) =>
+            onChange({ ...draft, assignment: event.target.value })
+          }
+          value={draft.assignment}
+        >
+          <option value="personal">Personal</option>
+          {clients.map((client) => (
+            <option key={client.id} value={`client:${client.id}`}>
+              {client.name}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <div className="flex gap-2">
+        <button
+          className="min-h-11 rounded-md border border-slate-300 px-4 text-sm font-semibold text-slate-900 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+          onClick={onCancel}
+          type="button"
+        >
+          Cancel
+        </button>
+        <button
+          className="min-h-11 rounded-md bg-slate-950 px-5 text-sm font-semibold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-400"
+          disabled={isSaving}
+          onClick={onSave}
+          type="button"
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DraftOverlay({ draft }: { draft: DraftBlock }) {
+  const range = normalizedDraftRange(draft);
+  const top = (range.startMinute / 60) * HOUR_HEIGHT_PX;
+  const height = ((range.endMinute - range.startMinute) / 60) * HOUR_HEIGHT_PX;
+
+  return (
+    <div
+      className="pointer-events-none absolute left-3 right-3 rounded-md border-2 border-dashed border-emerald-500 bg-emerald-100/70"
+      style={{ top, height }}
+    />
   );
 }
 
@@ -131,7 +345,9 @@ function TimelineBlock({ block }: { block: TimeBlock }) {
 
   return (
     <article
+      data-time-block="true"
       className="absolute left-3 right-3 overflow-hidden rounded-md border border-black/10 px-3 py-2 shadow-sm"
+      onPointerDown={(event) => event.stopPropagation()}
       style={{
         top,
         height,
@@ -201,6 +417,89 @@ function formatTime(time: string) {
 function minutesFromTime(time: string) {
   const [hour = "0", minute = "0"] = time.split(":");
   return Number(hour) * 60 + Number(minute);
+}
+
+function sortBlocks(first: TimeBlock, second: TimeBlock) {
+  return minutesFromTime(first.start_time) - minutesFromTime(second.start_time);
+}
+
+function minuteFromPointer(
+  element: HTMLDivElement,
+  clientY: number,
+  allowDayEnd = false,
+) {
+  const rect = element.getBoundingClientRect();
+  const y = clamp(clientY - rect.top, 0, rect.height);
+  const minute = Math.floor((y / HOUR_HEIGHT_PX) * 60);
+  const maxMinute = allowDayEnd ? DAY_MINUTES : DAY_MINUTES - SNAP_MINUTES;
+
+  return clamp(Math.floor(minute / SNAP_MINUTES) * SNAP_MINUTES, 0, maxMinute);
+}
+
+function normalizedDraftRange(draft: DraftBlock) {
+  const startMinute = Math.min(draft.startMinute, draft.endMinute);
+  let endMinute = Math.max(draft.startMinute, draft.endMinute);
+
+  if (endMinute - startMinute < SNAP_MINUTES) {
+    endMinute = clamp(
+      startMinute + 60,
+      startMinute + SNAP_MINUTES,
+      DAY_MINUTES,
+    );
+  }
+
+  return { endMinute, startMinute };
+}
+
+function payloadFromDraft(
+  day: string,
+  draft: DraftBlock,
+): TimeBlockPayload | null {
+  const range = normalizedDraftRange(draft);
+  const title = draft.title.trim();
+
+  if (draft.assignment === "personal") {
+    return {
+      category: "personal",
+      client_id: null,
+      day,
+      end_time: timeValue(range.endMinute),
+      start_time: timeValue(range.startMinute),
+      title: title || null,
+    };
+  }
+
+  const clientId = draft.assignment.startsWith("client:")
+    ? draft.assignment.slice("client:".length)
+    : "";
+
+  if (!clientId) {
+    return null;
+  }
+
+  return {
+    category: "client",
+    client_id: clientId,
+    day,
+    end_time: timeValue(range.endMinute),
+    start_time: timeValue(range.startMinute),
+    title: title || null,
+  };
+}
+
+function timeValue(minuteOfDay: number) {
+  if (minuteOfDay >= DAY_MINUTES) {
+    return "23:59";
+  }
+
+  const hour = Math.floor(minuteOfDay / 60);
+  const minute = minuteOfDay % 60;
+
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function minuteLabel(minuteOfDay: number) {
+  return formatTime(timeValue(minuteOfDay));
 }
 
 function labelForCategory(block: TimeBlock) {
