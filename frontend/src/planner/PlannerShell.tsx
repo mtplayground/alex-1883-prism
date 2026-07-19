@@ -1,6 +1,7 @@
 import type { User } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { ClientManager } from "./ClientManager";
+import { DayTimeline } from "./DayTimeline";
 
 export function PlannerShell({ user }: { user: User }) {
   const { refresh } = useAuth();
@@ -38,6 +39,7 @@ export function PlannerShell({ user }: { user: User }) {
         </div>
       </header>
 
+      <DayTimeline />
       <ClientManager />
     </main>
   );
