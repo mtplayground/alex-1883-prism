@@ -1,7 +1,16 @@
-use axum::http::{header, HeaderMap};
+use axum::{
+    extract::State,
+    http::{header, HeaderMap, Request},
+    middleware::Next,
+    response::{Redirect, Response},
+};
 use jsonwebtoken::{decode, decode_header, jwk::JwkSet, Algorithm, DecodingKey, Validation};
 
-use crate::{accounts::UserClaims, config::Config};
+use crate::{
+    accounts::{self, CurrentUser, UserClaims},
+    config::Config,
+    http::AppState,
+};
 
 #[derive(Debug)]
 pub enum AuthError {
@@ -23,6 +32,50 @@ pub async fn verify_session(headers: &HeaderMap, config: &Config) -> Result<User
             tracing::warn!("mctai_session verification failed: {err}");
             AuthError::InvalidSession
         })
+}
+
+pub async fn login(State(state): State<AppState>) -> Redirect {
+    Redirect::temporary(&login_url(&state.config))
+}
+
+pub async fn require_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    mut request: Request<axum::body::Body>,
+    next: Next,
+) -> Result<Response, accounts::AuthResponse> {
+    let claims = verify_session(&headers, &state.config)
+        .await
+        .map_err(|err| accounts::auth_error_response_with_message(err, "sign-in required"))?;
+
+    let user = accounts::upsert_user(&state.db, &claims)
+        .await
+        .map_err(|err| {
+            tracing::error!("failed to upsert authenticated user: {err}");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(accounts::ErrorResponse {
+                    error: "authentication failed",
+                }),
+            )
+        })?;
+
+    request.extensions_mut().insert(CurrentUser(user));
+
+    Ok(next.run(request).await)
+}
+
+pub fn login_url(config: &Config) -> String {
+    let return_to = config.self_url.trim_end_matches('/');
+    let return_to_url = format!("{return_to}/");
+    let encoded_return_to = urlencoding::encode(&return_to_url);
+
+    format!(
+        "{}/login?app_token={}&return_to={}",
+        config.mctai_auth_url.trim_end_matches('/'),
+        config.mctai_auth_app_token,
+        encoded_return_to
+    )
 }
 
 async fn fetch_decoding_key(token: &str, config: &Config) -> Result<DecodingKey, AuthError> {
