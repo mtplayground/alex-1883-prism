@@ -3,7 +3,7 @@ use axum::{
     http::{header, HeaderValue, Method, StatusCode},
     middleware::Next,
     response::Response,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde::Serialize;
@@ -13,7 +13,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use crate::config::Config;
+use crate::{accounts, config::Config};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -45,6 +45,7 @@ pub fn build_router(config: Config, db: PgPool) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/config", get(public_config))
+        .route("/api/auth/register", post(accounts::register))
         .layer(axum::middleware::from_fn(forwarded_host_vary))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
