@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type FormEvent,
   type PointerEvent,
 } from "react";
 
@@ -11,6 +12,7 @@ import { ApiError } from "../api/client";
 import { getClients } from "../api/clients";
 import {
   createTimeBlock,
+  deleteTimeBlock,
   getTimeBlocks,
   updateTimeBlock,
 } from "../api/timeBlocks";
@@ -25,6 +27,11 @@ interface DraftBlock {
   endMinute: number;
   isSelecting: boolean;
   startMinute: number;
+  title: string;
+}
+
+interface EditBlockDraft {
+  assignment: string;
   title: string;
 }
 
@@ -48,6 +55,11 @@ export function DayTimeline() {
   const activeDragRef = useRef<ActiveBlockDrag | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
   const [draft, setDraft] = useState<DraftBlock | null>(null);
+  const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<EditBlockDraft>({
+    assignment: "personal",
+    title: "",
+  });
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -99,10 +111,27 @@ export function DayTimeline() {
     [blocks],
   );
 
+  const editingBlock =
+    editingBlockId === null
+      ? null
+      : (blocks.find((block) => block.id === editingBlockId) ?? null);
+
   const commitBlockDrag = useCallback(
     async (drag: ActiveBlockDrag) => {
       const block = blocks.find((candidate) => candidate.id === drag.blockId);
       if (!block) {
+        setActiveDrag(null);
+        return;
+      }
+
+      const unchanged =
+        drag.startMinute === drag.originalStartMinute &&
+        drag.endMinute === drag.originalEndMinute;
+      if (unchanged) {
+        if (drag.mode === "move") {
+          setEditDraft(blockToEditDraft(block));
+          setEditingBlockId(block.id);
+        }
         setActiveDrag(null);
         return;
       }
@@ -124,6 +153,9 @@ export function DayTimeline() {
               candidate.id === response.block.id ? response.block : candidate,
             )
             .sort(sortBlocks),
+        );
+        setEditingBlockId((current) =>
+          current === response.block.id ? response.block.id : current,
         );
       } catch (updateError) {
         setError(errorMessage(updateError, "Unable to update time block."));
@@ -258,6 +290,7 @@ export function DayTimeline() {
     const endMinute = clamp(minutesFromTime(block.end_time), 0, DAY_MINUTES);
 
     setDraft(null);
+    setEditingBlockId(null);
     setError(null);
     setActiveDrag({
       blockId: block.id,
@@ -269,6 +302,13 @@ export function DayTimeline() {
       startClientY: event.clientY,
       startMinute,
     });
+  }
+
+  function handleEditBlock(block: TimeBlock) {
+    setDraft(null);
+    setEditDraft(blockToEditDraft(block));
+    setEditingBlockId(block.id);
+    setError(null);
   }
 
   async function handleCreateDraft() {
@@ -289,8 +329,63 @@ export function DayTimeline() {
       const response = await createTimeBlock(payload);
       setBlocks((current) => [...current, response.block].sort(sortBlocks));
       setDraft(null);
+      handleEditBlock(response.block);
     } catch (createError) {
       setError(errorMessage(createError, "Unable to add time block."));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleUpdateBlock(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingBlock) {
+      return;
+    }
+
+    const payload = payloadFromEdit(day, editingBlock, editDraft);
+    if (!payload) {
+      setError("Choose a client or Personal.");
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      const response = await updateTimeBlock(editingBlock.id, payload);
+      setBlocks((current) =>
+        current
+          .map((block) =>
+            block.id === response.block.id ? response.block : block,
+          )
+          .sort(sortBlocks),
+      );
+      setEditDraft(blockToEditDraft(response.block));
+      setEditingBlockId(response.block.id);
+    } catch (updateError) {
+      setError(errorMessage(updateError, "Unable to update time block."));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleDeleteBlock(block: TimeBlock) {
+    if (!window.confirm(`Remove ${blockTitle(block)}?`)) {
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      await deleteTimeBlock(block.id);
+      setBlocks((current) =>
+        current.filter((candidate) => candidate.id !== block.id),
+      );
+      setEditingBlockId(null);
+    } catch (deleteError) {
+      setError(errorMessage(deleteError, "Unable to remove time block."));
     } finally {
       setIsSaving(false);
     }
@@ -326,6 +421,19 @@ export function DayTimeline() {
           onCancel={() => setDraft(null)}
           onChange={setDraft}
           onSave={() => void handleCreateDraft()}
+        />
+      ) : null}
+
+      {editingBlock ? (
+        <EditBlockForm
+          block={editingBlock}
+          clients={clients}
+          draft={editDraft}
+          isSaving={isSaving}
+          onCancel={() => setEditingBlockId(null)}
+          onChange={setEditDraft}
+          onDelete={() => void handleDeleteBlock(editingBlock)}
+          onSubmit={(event) => void handleUpdateBlock(event)}
         />
       ) : null}
 
@@ -380,6 +488,7 @@ export function DayTimeline() {
                 }
                 isSaving={isSaving && activeDrag?.blockId === block.id}
                 key={block.id}
+                onOpen={handleEditBlock}
                 onDragStart={handleBlockDragStart}
               />
             ))}
@@ -473,6 +582,105 @@ function QuickCreateForm({
   );
 }
 
+function EditBlockForm({
+  block,
+  clients,
+  draft,
+  isSaving,
+  onCancel,
+  onChange,
+  onDelete,
+  onSubmit,
+}: {
+  block: TimeBlock;
+  clients: Client[];
+  draft: EditBlockDraft;
+  isSaving: boolean;
+  onCancel: () => void;
+  onChange: (draft: EditBlockDraft) => void;
+  onDelete: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const startMinute = minutesFromTime(block.start_time);
+  const endMinute = minutesFromTime(block.end_time);
+
+  return (
+    <form
+      className="mt-5 grid gap-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-[160px_minmax(0,1fr)_minmax(180px,220px)_auto] md:items-end"
+      onSubmit={onSubmit}
+    >
+      <div>
+        <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
+          Edit block
+        </div>
+        <div className="mt-2 text-sm font-bold text-slate-950">
+          {minuteLabel(startMinute)} - {minuteLabel(endMinute)}
+        </div>
+      </div>
+
+      <label className="block">
+        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
+          Title
+        </span>
+        <input
+          className="mt-2 min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+          onChange={(event) =>
+            onChange({ ...draft, title: event.target.value })
+          }
+          type="text"
+          value={draft.title}
+        />
+      </label>
+
+      <label className="block">
+        <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
+          Category
+        </span>
+        <select
+          className="mt-2 min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-950 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+          onChange={(event) =>
+            onChange({ ...draft, assignment: event.target.value })
+          }
+          value={draft.assignment}
+        >
+          <option value="personal">Personal</option>
+          {clients.map((client) => (
+            <option key={client.id} value={`client:${client.id}`}>
+              {client.name}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          className="min-h-11 rounded-md border border-slate-300 px-4 text-sm font-semibold text-slate-900 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+          disabled={isSaving}
+          onClick={onCancel}
+          type="button"
+        >
+          Cancel
+        </button>
+        <button
+          className="min-h-11 rounded-md border border-rose-200 px-4 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
+          disabled={isSaving}
+          onClick={onDelete}
+          type="button"
+        >
+          Delete
+        </button>
+        <button
+          className="min-h-11 rounded-md bg-slate-950 px-5 text-sm font-semibold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-400"
+          disabled={isSaving}
+          type="submit"
+        >
+          Save
+        </button>
+      </div>
+    </form>
+  );
+}
+
 function DraftOverlay({ draft }: { draft: DraftBlock }) {
   const range = normalizedDraftRange(draft);
   const top = (range.startMinute / 60) * HOUR_HEIGHT_PX;
@@ -491,6 +699,7 @@ function TimelineBlock({
   dragRange,
   isSaving,
   onDragStart,
+  onOpen,
 }: {
   block: TimeBlock;
   dragRange: { endMinute: number; startMinute: number } | null;
@@ -500,6 +709,7 @@ function TimelineBlock({
     mode: BlockDragMode,
     event: PointerEvent<HTMLElement>,
   ) => void;
+  onOpen: (block: TimeBlock) => void;
 }) {
   const startMinutes =
     dragRange?.startMinute ??
@@ -519,13 +729,21 @@ function TimelineBlock({
       className={`absolute left-3 right-3 overflow-hidden rounded-md border border-black/10 px-3 py-2 shadow-sm ${
         isSaving ? "opacity-80" : ""
       }`}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen(block);
+        }
+      }}
       onPointerDown={(event) => onDragStart(block, "move", event)}
+      role="button"
       style={{
         top,
         height,
         backgroundColor: block.color,
         color: readableTextColor(block.color),
       }}
+      tabIndex={0}
     >
       <div className="flex h-full min-w-0 items-center gap-3">
         <div className="grid h-9 w-11 shrink-0 place-items-center rounded-md bg-white/20 px-2 text-sm font-black">
@@ -724,6 +942,54 @@ function payloadFromBlock(
   };
 }
 
+function payloadFromEdit(
+  day: string,
+  block: TimeBlock,
+  draft: EditBlockDraft,
+): TimeBlockPayload | null {
+  const title = draft.title.trim();
+  const startMinute = minutesFromTime(block.start_time);
+  const endMinute = minutesFromTime(block.end_time);
+
+  if (draft.assignment === "personal") {
+    return {
+      category: "personal",
+      client_id: null,
+      day,
+      end_time: timeValue(endMinute),
+      start_time: timeValue(startMinute),
+      title: title || null,
+    };
+  }
+
+  const clientId = draft.assignment.startsWith("client:")
+    ? draft.assignment.slice("client:".length)
+    : "";
+
+  if (!clientId) {
+    return null;
+  }
+
+  return {
+    category: "client",
+    client_id: clientId,
+    day,
+    end_time: timeValue(endMinute),
+    start_time: timeValue(startMinute),
+    title: title || null,
+  };
+}
+
+function blockToEditDraft(block: TimeBlock): EditBlockDraft {
+  return {
+    assignment:
+      block.category === "client" && block.client_id
+        ? `client:${block.client_id}`
+        : "personal",
+    title: block.title ?? "",
+  };
+}
+
 function timeValue(minuteOfDay: number) {
   if (minuteOfDay >= DAY_MINUTES) {
     return "23:59";
@@ -741,6 +1007,10 @@ function minuteLabel(minuteOfDay: number) {
 
 function labelForCategory(block: TimeBlock) {
   return block.category === "personal" ? "Personal" : "Client";
+}
+
+function blockTitle(block: TimeBlock) {
+  return block.title ?? block.client_name ?? labelForCategory(block);
 }
 
 function validHexColor(color: string) {
