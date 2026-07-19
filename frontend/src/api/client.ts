@@ -38,6 +38,37 @@ export async function apiPost<T>(
   });
 }
 
+export async function apiPatch<T>(
+  path: string,
+  body?: unknown,
+  init?: RequestInit,
+): Promise<T> {
+  return apiRequest<T>(path, {
+    ...init,
+    method: "PATCH",
+    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...init?.headers,
+    },
+  });
+}
+
+export async function apiDelete(
+  path: string,
+  init?: RequestInit,
+): Promise<void> {
+  await apiRequest<void>(path, {
+    ...init,
+    method: "DELETE",
+    headers: {
+      Accept: "application/json",
+      ...init?.headers,
+    },
+  });
+}
+
 async function apiRequest<T>(path: string, init: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
@@ -46,6 +77,10 @@ async function apiRequest<T>(path: string, init: RequestInit): Promise<T> {
 
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
   }
 
   return (await response.json()) as T;

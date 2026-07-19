@@ -1,5 +1,6 @@
 import type { User } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
+import { ClientManager } from "./ClientManager";
 
 export function PlannerShell({ user }: { user: User }) {
   const { refresh } = useAuth();
@@ -37,21 +38,7 @@ export function PlannerShell({ user }: { user: User }) {
         </div>
       </header>
 
-      <section className="mx-auto max-w-6xl px-6 py-8">
-        <div className="grid gap-4 md:grid-cols-[120px_1fr]">
-          {Array.from({ length: 10 }, (_, index) => {
-            const hour = index + 8;
-            return (
-              <div className="contents" key={hour}>
-                <div className="py-4 text-sm font-semibold text-slate-500">
-                  {hour > 12 ? hour - 12 : hour} {hour >= 12 ? "PM" : "AM"}
-                </div>
-                <div className="min-h-16 rounded-md border border-dashed border-slate-300 bg-white" />
-              </div>
-            );
-          })}
-        </div>
-      </section>
+      <ClientManager />
     </main>
   );
 }

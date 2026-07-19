@@ -23,3 +23,39 @@ export interface User {
 export interface AuthUserResponse {
   user: User;
 }
+
+export interface Client {
+  id: string;
+  user_sub: string;
+  name: string;
+  initials: string;
+  color: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClientPayload {
+  name: string;
+  initials: string;
+  color: string;
+}
+
+export interface ClientListResponse {
+  clients: Client[];
+  personal_color: string;
+}
+
+export interface ClientResponse {
+  client: Client;
+}
+
+export interface UserSettings {
+  user_sub: string;
+  personal_color: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserSettingsResponse {
+  settings: UserSettings;
+}
