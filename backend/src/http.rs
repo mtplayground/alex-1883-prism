@@ -13,7 +13,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use crate::{accounts, auth, clients, config::Config};
+use crate::{accounts, auth, clients, config::Config, time_blocks};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -46,6 +46,7 @@ pub fn build_router(config: Config, db: PgPool) -> Router {
     let protected_routes = Router::new()
         .route("/api/auth/me", get(accounts::me))
         .merge(clients::routes())
+        .merge(time_blocks::routes())
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_user,
