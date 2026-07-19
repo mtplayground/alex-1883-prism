@@ -11,14 +11,37 @@ export class ApiError extends Error {
 }
 
 export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  return apiRequest<T>(path, {
     ...init,
     method: "GET",
-    credentials: "include",
     headers: {
       Accept: "application/json",
       ...init?.headers,
     },
+  });
+}
+
+export async function apiPost<T>(
+  path: string,
+  body?: unknown,
+  init?: RequestInit,
+): Promise<T> {
+  return apiRequest<T>(path, {
+    ...init,
+    method: "POST",
+    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...init?.headers,
+    },
+  });
+}
+
+async function apiRequest<T>(path: string, init: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    credentials: "include",
   });
 
   if (!response.ok) {
