@@ -1,8 +1,19 @@
-import { useEffect, useMemo, useState, type PointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent,
+} from "react";
 
 import { ApiError } from "../api/client";
 import { getClients } from "../api/clients";
-import { createTimeBlock, getTimeBlocks } from "../api/timeBlocks";
+import {
+  createTimeBlock,
+  getTimeBlocks,
+  updateTimeBlock,
+} from "../api/timeBlocks";
 import type { Client, TimeBlock, TimeBlockPayload } from "../api/types";
 
 const HOUR_HEIGHT_PX = 72;
@@ -17,9 +28,24 @@ interface DraftBlock {
   title: string;
 }
 
+type BlockDragMode = "move" | "resize-end" | "resize-start";
+
+interface ActiveBlockDrag {
+  blockId: string;
+  endMinute: number;
+  mode: BlockDragMode;
+  originalEndMinute: number;
+  originalStartMinute: number;
+  pointerId: number;
+  startClientY: number;
+  startMinute: number;
+}
+
 export function DayTimeline() {
   const day = useMemo(() => todayDate(), []);
   const [blocks, setBlocks] = useState<TimeBlock[]>([]);
+  const [activeDrag, setActiveDrag] = useState<ActiveBlockDrag | null>(null);
+  const activeDragRef = useRef<ActiveBlockDrag | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
   const [draft, setDraft] = useState<DraftBlock | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -73,10 +99,94 @@ export function DayTimeline() {
     [blocks],
   );
 
+  const commitBlockDrag = useCallback(
+    async (drag: ActiveBlockDrag) => {
+      const block = blocks.find((candidate) => candidate.id === drag.blockId);
+      if (!block) {
+        setActiveDrag(null);
+        return;
+      }
+
+      const payload = payloadFromBlock(
+        day,
+        block,
+        drag.startMinute,
+        drag.endMinute,
+      );
+      setIsSaving(true);
+      setError(null);
+
+      try {
+        const response = await updateTimeBlock(block.id, payload);
+        setBlocks((current) =>
+          current
+            .map((candidate) =>
+              candidate.id === response.block.id ? response.block : candidate,
+            )
+            .sort(sortBlocks),
+        );
+      } catch (updateError) {
+        setError(errorMessage(updateError, "Unable to update time block."));
+      } finally {
+        setActiveDrag(null);
+        setIsSaving(false);
+      }
+    },
+    [blocks, day],
+  );
+
+  useEffect(() => {
+    activeDragRef.current = activeDrag;
+
+    if (!activeDrag) {
+      return;
+    }
+
+    function handleWindowPointerMove(event: globalThis.PointerEvent) {
+      setActiveDrag((current) => {
+        if (!current || current.pointerId !== event.pointerId) {
+          return current;
+        }
+
+        const deltaMinutes = snapDeltaMinutes(
+          ((event.clientY - current.startClientY) / HOUR_HEIGHT_PX) * 60,
+        );
+        const nextRange = rangeForDrag(current, deltaMinutes);
+
+        const nextDrag = {
+          ...current,
+          endMinute: nextRange.endMinute,
+          startMinute: nextRange.startMinute,
+        };
+        activeDragRef.current = nextDrag;
+
+        return nextDrag;
+      });
+    }
+
+    function handleWindowPointerUp(event: globalThis.PointerEvent) {
+      const currentDrag = activeDragRef.current;
+      if (currentDrag?.pointerId === event.pointerId) {
+        void commitBlockDrag(currentDrag);
+      }
+    }
+
+    window.addEventListener("pointermove", handleWindowPointerMove);
+    window.addEventListener("pointerup", handleWindowPointerUp);
+    window.addEventListener("pointercancel", handleWindowPointerUp);
+
+    return () => {
+      window.removeEventListener("pointermove", handleWindowPointerMove);
+      window.removeEventListener("pointerup", handleWindowPointerUp);
+      window.removeEventListener("pointercancel", handleWindowPointerUp);
+    };
+  }, [activeDrag, commitBlockDrag]);
+
   function handleTimelinePointerDown(
     event: PointerEvent<HTMLDivElement>,
   ): void {
     if (
+      activeDrag ||
       event.button !== 0 ||
       (event.target as HTMLElement).closest("[data-time-block]")
     ) {
@@ -129,6 +239,35 @@ export function DayTimeline() {
         isSelecting: false,
         startMinute: range.startMinute,
       };
+    });
+  }
+
+  function handleBlockDragStart(
+    block: TimeBlock,
+    mode: BlockDragMode,
+    event: PointerEvent<HTMLElement>,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const startMinute = clamp(
+      minutesFromTime(block.start_time),
+      0,
+      DAY_MINUTES,
+    );
+    const endMinute = clamp(minutesFromTime(block.end_time), 0, DAY_MINUTES);
+
+    setDraft(null);
+    setError(null);
+    setActiveDrag({
+      blockId: block.id,
+      endMinute,
+      mode,
+      originalEndMinute: endMinute,
+      originalStartMinute: startMinute,
+      pointerId: event.pointerId,
+      startClientY: event.clientY,
+      startMinute,
     });
   }
 
@@ -229,7 +368,20 @@ export function DayTimeline() {
 
             {draft ? <DraftOverlay draft={draft} /> : null}
             {sortedBlocks.map((block) => (
-              <TimelineBlock block={block} key={block.id} />
+              <TimelineBlock
+                block={block}
+                dragRange={
+                  activeDrag?.blockId === block.id
+                    ? {
+                        endMinute: activeDrag.endMinute,
+                        startMinute: activeDrag.startMinute,
+                      }
+                    : null
+                }
+                isSaving={isSaving && activeDrag?.blockId === block.id}
+                key={block.id}
+                onDragStart={handleBlockDragStart}
+              />
             ))}
           </div>
         </div>
@@ -334,9 +486,27 @@ function DraftOverlay({ draft }: { draft: DraftBlock }) {
   );
 }
 
-function TimelineBlock({ block }: { block: TimeBlock }) {
-  const startMinutes = clamp(minutesFromTime(block.start_time), 0, DAY_MINUTES);
-  const endMinutes = clamp(minutesFromTime(block.end_time), 0, DAY_MINUTES);
+function TimelineBlock({
+  block,
+  dragRange,
+  isSaving,
+  onDragStart,
+}: {
+  block: TimeBlock;
+  dragRange: { endMinute: number; startMinute: number } | null;
+  isSaving: boolean;
+  onDragStart: (
+    block: TimeBlock,
+    mode: BlockDragMode,
+    event: PointerEvent<HTMLElement>,
+  ) => void;
+}) {
+  const startMinutes =
+    dragRange?.startMinute ??
+    clamp(minutesFromTime(block.start_time), 0, DAY_MINUTES);
+  const endMinutes =
+    dragRange?.endMinute ??
+    clamp(minutesFromTime(block.end_time), 0, DAY_MINUTES);
   const durationMinutes = Math.max(endMinutes - startMinutes, 1);
   const top = (startMinutes / 60) * HOUR_HEIGHT_PX;
   const height = (durationMinutes / 60) * HOUR_HEIGHT_PX;
@@ -346,8 +516,10 @@ function TimelineBlock({ block }: { block: TimeBlock }) {
   return (
     <article
       data-time-block="true"
-      className="absolute left-3 right-3 overflow-hidden rounded-md border border-black/10 px-3 py-2 shadow-sm"
-      onPointerDown={(event) => event.stopPropagation()}
+      className={`absolute left-3 right-3 overflow-hidden rounded-md border border-black/10 px-3 py-2 shadow-sm ${
+        isSaving ? "opacity-80" : ""
+      }`}
+      onPointerDown={(event) => onDragStart(block, "move", event)}
       style={{
         top,
         height,
@@ -363,11 +535,19 @@ function TimelineBlock({ block }: { block: TimeBlock }) {
           <div className="truncate text-sm font-bold">{title}</div>
           {!compact ? (
             <div className="mt-1 truncate text-xs font-semibold opacity-85">
-              {formatTime(block.start_time)} - {formatTime(block.end_time)}
+              {minuteLabel(startMinutes)} - {minuteLabel(endMinutes)}
             </div>
           ) : null}
         </div>
       </div>
+      <div
+        className="absolute inset-x-0 top-0 h-2 cursor-ns-resize"
+        onPointerDown={(event) => onDragStart(block, "resize-start", event)}
+      />
+      <div
+        className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize"
+        onPointerDown={(event) => onDragStart(block, "resize-end", event)}
+      />
     </article>
   );
 }
@@ -421,6 +601,47 @@ function minutesFromTime(time: string) {
 
 function sortBlocks(first: TimeBlock, second: TimeBlock) {
   return minutesFromTime(first.start_time) - minutesFromTime(second.start_time);
+}
+
+function snapDeltaMinutes(deltaMinutes: number) {
+  return Math.round(deltaMinutes / SNAP_MINUTES) * SNAP_MINUTES;
+}
+
+function rangeForDrag(drag: ActiveBlockDrag, deltaMinutes: number) {
+  const duration = drag.originalEndMinute - drag.originalStartMinute;
+
+  if (drag.mode === "move") {
+    const startMinute = clamp(
+      drag.originalStartMinute + deltaMinutes,
+      0,
+      DAY_MINUTES - duration,
+    );
+
+    return {
+      endMinute: startMinute + duration,
+      startMinute,
+    };
+  }
+
+  if (drag.mode === "resize-start") {
+    return {
+      endMinute: drag.originalEndMinute,
+      startMinute: clamp(
+        drag.originalStartMinute + deltaMinutes,
+        0,
+        drag.originalEndMinute - SNAP_MINUTES,
+      ),
+    };
+  }
+
+  return {
+    endMinute: clamp(
+      drag.originalEndMinute + deltaMinutes,
+      drag.originalStartMinute + SNAP_MINUTES,
+      DAY_MINUTES,
+    ),
+    startMinute: drag.originalStartMinute,
+  };
 }
 
 function minuteFromPointer(
@@ -484,6 +705,22 @@ function payloadFromDraft(
     end_time: timeValue(range.endMinute),
     start_time: timeValue(range.startMinute),
     title: title || null,
+  };
+}
+
+function payloadFromBlock(
+  day: string,
+  block: TimeBlock,
+  startMinute: number,
+  endMinute: number,
+): TimeBlockPayload {
+  return {
+    category: block.category,
+    client_id: block.client_id,
+    day,
+    end_time: timeValue(endMinute),
+    start_time: timeValue(startMinute),
+    title: block.title,
   };
 }
 

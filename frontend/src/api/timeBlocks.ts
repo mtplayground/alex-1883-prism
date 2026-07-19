@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from "./client";
+import { apiGet, apiPatch, apiPost } from "./client";
 import type {
   TimeBlockListResponse,
   TimeBlockPayload,
@@ -13,4 +13,11 @@ export function getTimeBlocks(day: string) {
 
 export function createTimeBlock(payload: TimeBlockPayload) {
   return apiPost<TimeBlockResponse>("/api/time-blocks", payload);
+}
+
+export function updateTimeBlock(blockId: string, payload: TimeBlockPayload) {
+  return apiPatch<TimeBlockResponse>(
+    `/api/time-blocks/${encodeURIComponent(blockId)}`,
+    payload,
+  );
 }
