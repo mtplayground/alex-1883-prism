@@ -59,3 +59,23 @@ export interface UserSettings {
 export interface UserSettingsResponse {
   settings: UserSettings;
 }
+
+export interface TimeBlock {
+  id: string;
+  user_sub: string;
+  day: string;
+  start_time: string;
+  end_time: string;
+  title: string | null;
+  category: "client" | "personal";
+  client_id: string | null;
+  color: string;
+  initials: string;
+  client_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TimeBlockListResponse {
+  blocks: TimeBlock[];
+}
