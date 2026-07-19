@@ -46,7 +46,7 @@ function SignedOutHome() {
   const { signIn } = useAuth();
 
   return (
-    <main className="min-h-screen bg-stone-50 text-slate-950">
+    <main className="min-h-screen bg-green-50 text-slate-950">
       <section className="mx-auto flex min-h-screen w-full max-w-6xl flex-col justify-center px-6 py-10">
         <div className="grid items-center gap-10 lg:grid-cols-[1fr_420px]">
           <div className="max-w-3xl">
@@ -104,7 +104,7 @@ function SignedOutHome() {
 
 function LoadingScreen() {
   return (
-    <main className="grid min-h-screen place-items-center bg-stone-50 px-6 text-slate-950">
+    <main className="grid min-h-screen place-items-center bg-green-50 px-6 text-slate-950">
       <div className="text-sm font-semibold uppercase tracking-[0.18em] text-emerald-700">
         Loading planner
       </div>

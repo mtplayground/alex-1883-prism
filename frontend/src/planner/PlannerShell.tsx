@@ -8,7 +8,7 @@ export function PlannerShell({ user }: { user: User }) {
   const displayName = user.name ?? user.email;
 
   return (
-    <main className="min-h-screen bg-stone-50 text-slate-950">
+    <main className="min-h-screen bg-green-50 text-slate-950">
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex min-h-16 max-w-6xl items-center justify-between gap-4 px-6">
           <div>

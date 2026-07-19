@@ -4,7 +4,7 @@ export function RegisterPage() {
   const { error, register, signIn, status, user } = useAuth();
 
   return (
-    <main className="min-h-screen bg-stone-50 text-slate-950">
+    <main className="min-h-screen bg-green-50 text-slate-950">
       <section className="mx-auto grid min-h-screen w-full max-w-5xl items-center gap-8 px-6 py-10 md:grid-cols-[1fr_380px]">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.18em] text-emerald-700">
