@@ -1,6 +1,8 @@
 target/
 node_modules/
 dist/
+frontend/playwright-report/
+frontend/test-results/
 .gh_token
 .database_url
 .task_id

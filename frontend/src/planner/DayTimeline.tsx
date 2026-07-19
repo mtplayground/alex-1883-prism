@@ -287,6 +287,7 @@ export function DayTimeline() {
         startMinute: range.startMinute,
       };
     });
+    void refreshClientsForBlockForm();
   }
 
   function handleBlockDragStart(
@@ -324,6 +325,16 @@ export function DayTimeline() {
     setEditDraft(blockToEditDraft(block));
     setEditingBlockId(block.id);
     setError(null);
+    void refreshClientsForBlockForm();
+  }
+
+  async function refreshClientsForBlockForm() {
+    try {
+      const response = await getClients();
+      setClients(response.clients);
+    } catch (clientError) {
+      setError(errorMessage(clientError, "Unable to load clients."));
+    }
   }
 
   async function handleCreateDraft() {
@@ -471,6 +482,7 @@ export function DayTimeline() {
 
           <div
             className="relative cursor-crosshair bg-white"
+            data-testid="day-timeline-grid"
             onPointerDown={handleTimelinePointerDown}
             onPointerMove={handleTimelinePointerMove}
             onPointerCancel={handleTimelinePointerUp}
@@ -588,7 +600,10 @@ function QuickCreateForm({
   const range = normalizedDraftRange(draft);
 
   return (
-    <div className="mt-5 grid gap-4 rounded-md border border-emerald-200 bg-white p-4 shadow-sm md:grid-cols-[160px_minmax(0,1fr)_minmax(180px,220px)_auto] md:items-end">
+    <div
+      className="mt-5 grid gap-4 rounded-md border border-emerald-200 bg-white p-4 shadow-sm md:grid-cols-[160px_minmax(0,1fr)_minmax(180px,220px)_auto] md:items-end"
+      data-testid="quick-create-form"
+    >
       <div>
         <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
           Time
@@ -678,6 +693,7 @@ function EditBlockForm({
   return (
     <form
       className="mt-5 grid gap-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-[160px_minmax(0,1fr)_minmax(180px,220px)_auto] md:items-end"
+      data-testid="edit-block-form"
       onSubmit={onSubmit}
     >
       <div>
@@ -797,6 +813,7 @@ function TimelineBlock({
   return (
     <article
       data-time-block="true"
+      data-testid={`time-block-${block.id}`}
       className={`absolute left-3 right-3 overflow-hidden rounded-md border border-black/10 px-3 py-2 shadow-sm ${
         isSaving ? "opacity-80" : ""
       }`}
@@ -831,10 +848,12 @@ function TimelineBlock({
       </div>
       <div
         className="absolute inset-x-0 top-0 h-2 cursor-ns-resize"
+        data-testid={`time-block-${block.id}-resize-start`}
         onPointerDown={(event) => onDragStart(block, "resize-start", event)}
       />
       <div
         className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize"
+        data-testid={`time-block-${block.id}-resize-end`}
         onPointerDown={(event) => onDragStart(block, "resize-end", event)}
       />
     </article>
