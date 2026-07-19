@@ -1,5 +1,6 @@
 mod accounts;
 mod auth;
+mod clients;
 mod config;
 mod db;
 mod http;

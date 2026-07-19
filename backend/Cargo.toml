@@ -11,9 +11,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 jsonwebtoken = "8.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
-sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "migrate", "chrono"] }
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "migrate", "chrono", "uuid"] }
 tokio = { version = "1.41", features = ["macros", "rt-multi-thread", "signal", "net"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 urlencoding = "2.1"
+uuid = { version = "1.11", features = ["serde"] }
