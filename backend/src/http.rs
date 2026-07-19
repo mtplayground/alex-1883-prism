@@ -1,12 +1,13 @@
 use axum::{
     extract::State,
-    http::{header, HeaderValue, Method},
+    http::{header, HeaderValue, Method, StatusCode},
     middleware::Next,
     response::Response,
     routing::get,
     Json, Router,
 };
 use serde::Serialize;
+use sqlx::PgPool;
 use tower_http::{
     cors::{AllowOrigin, CorsLayer},
     trace::TraceLayer,
@@ -17,11 +18,13 @@ use crate::config::Config;
 #[derive(Clone)]
 pub struct AppState {
     pub config: Config,
+    pub db: PgPool,
 }
 
 #[derive(Serialize)]
 struct HealthResponse {
     status: &'static str,
+    database: &'static str,
 }
 
 #[derive(Serialize)]
@@ -32,14 +35,10 @@ struct PublicConfigResponse {
     auth_jwks_configured: bool,
 }
 
-pub fn build_router(config: Config) -> Router {
+pub fn build_router(config: Config, db: PgPool) -> Router {
     let cors = CorsLayer::new()
         .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
-        .allow_headers([
-            header::ACCEPT,
-            header::AUTHORIZATION,
-            header::CONTENT_TYPE,
-        ])
+        .allow_headers([header::ACCEPT, header::AUTHORIZATION, header::CONTENT_TYPE])
         .allow_credentials(true)
         .allow_origin(AllowOrigin::list(cors_allowed_origins(&config)));
 
@@ -49,11 +48,29 @@ pub fn build_router(config: Config) -> Router {
         .layer(axum::middleware::from_fn(forwarded_host_vary))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
-        .with_state(AppState { config })
+        .with_state(AppState { config, db })
 }
 
-async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse { status: "ok" })
+async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthResponse>) {
+    match sqlx::query("SELECT 1").execute(&state.db).await {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(HealthResponse {
+                status: "ok",
+                database: "connected",
+            }),
+        ),
+        Err(err) => {
+            tracing::error!("database health check failed: {err}");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(HealthResponse {
+                    status: "degraded",
+                    database: "unavailable",
+                }),
+            )
+        }
+    }
 }
 
 async fn public_config(State(state): State<AppState>) -> Json<PublicConfigResponse> {
@@ -69,7 +86,7 @@ async fn public_config(State(state): State<AppState>) -> Json<PublicConfigRespon
 
     Json(PublicConfigResponse {
         auth_login_url,
-        self_url: state.config.self_url,
+        self_url: state.config.self_url.clone(),
         database_configured: state.config.database_configured(),
         auth_jwks_configured: state.config.auth_jwks_configured(),
     })
