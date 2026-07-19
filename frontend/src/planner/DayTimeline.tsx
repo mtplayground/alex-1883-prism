@@ -49,7 +49,7 @@ interface ActiveBlockDrag {
 }
 
 export function DayTimeline() {
-  const day = useMemo(() => todayDate(), []);
+  const [day, setDay] = useState(todayDate);
   const [blocks, setBlocks] = useState<TimeBlock[]>([]);
   const [activeDrag, setActiveDrag] = useState<ActiveBlockDrag | null>(null);
   const activeDragRef = useRef<ActiveBlockDrag | null>(null);
@@ -115,6 +115,21 @@ export function DayTimeline() {
     editingBlockId === null
       ? null
       : (blocks.find((block) => block.id === editingBlockId) ?? null);
+
+  function handleDayChange(nextDay: string) {
+    if (!validDateValue(nextDay)) {
+      return;
+    }
+
+    activeDragRef.current = null;
+    setActiveDrag(null);
+    setBlocks([]);
+    setDraft(null);
+    setEditingBlockId(null);
+    setError(null);
+    setPointerId(null);
+    setDay(nextDay);
+  }
 
   const commitBlockDrag = useCallback(
     async (drag: ActiveBlockDrag) => {
@@ -402,9 +417,12 @@ export function DayTimeline() {
             {formatDateLabel(day)}
           </h2>
         </div>
-        <div className="text-sm font-medium text-slate-600">
-          {isLoading ? "Loading" : `${blocks.length} blocks`}
-        </div>
+        <DayNavigation
+          blockCount={blocks.length}
+          day={day}
+          isLoading={isLoading}
+          onChangeDay={handleDayChange}
+        />
       </div>
 
       {error ? (
@@ -496,6 +514,59 @@ export function DayTimeline() {
         </div>
       </div>
     </section>
+  );
+}
+
+function DayNavigation({
+  blockCount,
+  day,
+  isLoading,
+  onChangeDay,
+}: {
+  blockCount: number;
+  day: string;
+  isLoading: boolean;
+  onChangeDay: (day: string) => void;
+}) {
+  const today = todayDate();
+
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      <button
+        className="min-h-10 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+        onClick={() => onChangeDay(shiftDate(day, -1))}
+        type="button"
+      >
+        Previous
+      </button>
+      <label className="block">
+        <span className="sr-only">Planner date</span>
+        <input
+          className="min-h-10 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-950 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+          onChange={(event) => onChangeDay(event.target.value)}
+          type="date"
+          value={day}
+        />
+      </label>
+      <button
+        className="min-h-10 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+        onClick={() => onChangeDay(shiftDate(day, 1))}
+        type="button"
+      >
+        Next
+      </button>
+      <button
+        className="min-h-10 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-400"
+        disabled={day === today}
+        onClick={() => onChangeDay(today)}
+        type="button"
+      >
+        Today
+      </button>
+      <div className="min-w-20 text-right text-sm font-medium text-slate-600">
+        {isLoading ? "Loading" : `${blockCount} blocks`}
+      </div>
+    </div>
   );
 }
 
@@ -774,11 +845,43 @@ const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 const HALF_HOURS = Array.from({ length: 24 }, (_, hour) => hour * 60 + 30);
 
 function todayDate() {
+  return dateValue(new Date());
+}
+
+function shiftDate(day: string, dayOffset: number) {
+  const [year, month, date] = day.split("-").map(Number);
+  const value = new Date(year, month - 1, date);
+  value.setDate(value.getDate() + dayOffset);
+
+  return dateValue(value);
+}
+
+function dateValue(date: Date) {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  if (Number.isNaN(date.getTime())) {
+    return dateValue(now);
+  }
+
   return `${year}-${month}-${day}`;
+}
+
+function validDateValue(day: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    return false;
+  }
+
+  const [year, month, date] = day.split("-").map(Number);
+  const value = new Date(year, month - 1, date);
+
+  return (
+    value.getFullYear() === year &&
+    value.getMonth() === month - 1 &&
+    value.getDate() === date
+  );
 }
 
 function formatDateLabel(day: string) {
