@@ -79,3 +79,16 @@ export interface TimeBlock {
 export interface TimeBlockListResponse {
   blocks: TimeBlock[];
 }
+
+export interface TimeBlockPayload {
+  day: string;
+  start_time: string;
+  end_time: string;
+  title?: string | null;
+  category: "client" | "personal";
+  client_id?: string | null;
+}
+
+export interface TimeBlockResponse {
+  block: TimeBlock;
+}
