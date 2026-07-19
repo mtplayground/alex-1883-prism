@@ -1,151 +1,135 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { ApiError } from "./api/client";
-import { getHealth, getPublicConfig } from "./api/system";
-import type { PublicConfigResponse } from "./api/types";
-
-type LoadState =
-  | { status: "loading" }
-  | { status: "ready"; config: PublicConfigResponse; apiStatus: string }
-  | { status: "error"; message: string };
+import { AuthProvider, useAuth } from "./auth/AuthContext";
+import { LoginPage } from "./auth/LoginPage";
+import { RegisterPage } from "./auth/RegisterPage";
+import { PlannerShell } from "./planner/PlannerShell";
 
 export function App() {
-  const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
+  return (
+    <AuthProvider>
+      <AppRoutes />
+    </AuthProvider>
+  );
+}
+
+function AppRoutes() {
+  const { status, user } = useAuth();
+  const [path, setPath] = usePathname();
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function loadShell() {
-      try {
-        const [config, health] = await Promise.all([
-          getPublicConfig(),
-          getHealth(),
-        ]);
-
-        if (!cancelled) {
-          setLoadState({ status: "ready", config, apiStatus: health.status });
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setLoadState({
-            status: "error",
-            message:
-              error instanceof ApiError
-                ? error.message
-                : "The API is not reachable from the frontend.",
-          });
-        }
-      }
+    if (status === "signed-in" && ["/", "/login", "/register"].includes(path)) {
+      setPath("/planner");
     }
+  }, [path, setPath, status]);
 
-    void loadShell();
+  if (status === "loading") {
+    return <LoadingScreen />;
+  }
 
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  if (path === "/login") {
+    return <LoginPage />;
+  }
+
+  if (path === "/register") {
+    return <RegisterPage />;
+  }
+
+  if (path === "/planner") {
+    return user ? <PlannerShell user={user} /> : <LoginPage />;
+  }
+
+  return user ? <PlannerShell user={user} /> : <SignedOutHome />;
+}
+
+function SignedOutHome() {
+  const { signIn } = useAuth();
 
   return (
     <main className="min-h-screen bg-stone-50 text-slate-950">
-      <section className="mx-auto flex min-h-screen w-full max-w-5xl flex-col justify-center px-6 py-12">
-        <div className="max-w-3xl">
-          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-emerald-700">
-            Planner foundation
-          </p>
-          <h1 className="mt-4 text-4xl font-semibold tracking-normal text-slate-950 sm:text-6xl">
-            A focused day view for clients and time blocks.
-          </h1>
-          <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-700">
-            The application shell is ready for authentication, client
-            management, and the hour-by-hour planner flow described in the
-            implementation issues.
-          </p>
-        </div>
+      <section className="mx-auto flex min-h-screen w-full max-w-6xl flex-col justify-center px-6 py-10">
+        <div className="grid items-center gap-10 lg:grid-cols-[1fr_420px]">
+          <div className="max-w-3xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-emerald-700">
+              Client time planner
+            </p>
+            <h1 className="mt-4 text-4xl font-semibold tracking-normal text-slate-950 sm:text-6xl">
+              Keep client work and personal time clear in one day view.
+            </h1>
+            <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-700">
+              Sign in to start building a private planner for clients, colors,
+              initials, and time blocks as the remaining workflow comes online.
+            </p>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <button
+                className="inline-flex min-h-11 items-center justify-center rounded-md bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+                onClick={signIn}
+                type="button"
+              >
+                Sign in
+              </button>
+              <a
+                className="inline-flex min-h-11 items-center justify-center rounded-md border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-900 transition hover:border-slate-400 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+                href="/register"
+              >
+                Create account
+              </a>
+            </div>
+          </div>
 
-        <div className="mt-10 grid gap-4 sm:grid-cols-3">
-          <StatusPanel
-            label="Frontend"
-            value="React + Tailwind"
-            tone="neutral"
-          />
-          <StatusPanel
-            label="Backend"
-            value={statusText(loadState)}
-            tone={statusTone(loadState)}
-          />
-          <StatusPanel
-            label="Storage"
-            value="PostgreSQL configured"
-            tone="neutral"
-          />
-        </div>
-
-        <div className="mt-10 flex flex-wrap items-center gap-3">
-          {loadState.status === "ready" ? (
-            <a
-              className="inline-flex min-h-11 items-center justify-center rounded-md bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
-              href={loadState.config.auth_login_url}
-            >
-              Sign in
-            </a>
-          ) : null}
-          <span className="text-sm text-slate-600">
-            {loadState.status === "error"
-              ? loadState.message
-              : "Core features will be added in the follow-up issues."}
-          </span>
+          <div className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="grid grid-cols-[72px_1fr] gap-3 text-sm">
+              {[
+                ["8 AM", "Plan the client day"],
+                ["10 AM", "Deep work block"],
+                ["1 PM", "Personal time"],
+                ["3 PM", "Client follow-up"],
+              ].map(([time, label]) => (
+                <div className="contents" key={time}>
+                  <div className="py-3 font-semibold text-slate-500">
+                    {time}
+                  </div>
+                  <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 font-medium text-emerald-950">
+                    {label}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </section>
     </main>
   );
 }
 
-function StatusPanel({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: "neutral" | "good" | "bad";
-}) {
-  const color =
-    tone === "good"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-      : tone === "bad"
-        ? "border-rose-200 bg-rose-50 text-rose-900"
-        : "border-slate-200 bg-white text-slate-900";
-
+function LoadingScreen() {
   return (
-    <div className={`rounded-md border p-4 shadow-sm ${color}`}>
-      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-        {label}
+    <main className="grid min-h-screen place-items-center bg-stone-50 px-6 text-slate-950">
+      <div className="text-sm font-semibold uppercase tracking-[0.18em] text-emerald-700">
+        Loading planner
       </div>
-      <div className="mt-2 text-base font-semibold">{value}</div>
-    </div>
+    </main>
   );
 }
 
-function statusText(loadState: LoadState) {
-  if (loadState.status === "ready") {
-    return `API ${loadState.apiStatus}`;
-  }
+function usePathname(): [string, (path: string) => void] {
+  const [path, setPathState] = useState(() => window.location.pathname || "/");
 
-  if (loadState.status === "error") {
-    return "API unavailable";
-  }
+  useEffect(() => {
+    const update = () => setPathState(window.location.pathname || "/");
+    window.addEventListener("popstate", update);
+    return () => window.removeEventListener("popstate", update);
+  }, []);
 
-  return "Checking API";
-}
+  const setPath = useMemo(
+    () => (nextPath: string) => {
+      if (window.location.pathname !== nextPath) {
+        window.history.pushState({}, "", nextPath);
+      }
+      setPathState(nextPath);
+    },
+    [],
+  );
 
-function statusTone(loadState: LoadState): "neutral" | "good" | "bad" {
-  if (loadState.status === "ready") {
-    return "good";
-  }
-
-  if (loadState.status === "error") {
-    return "bad";
-  }
-
-  return "neutral";
+  return [path, setPath];
 }
