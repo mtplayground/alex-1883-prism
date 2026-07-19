@@ -2,15 +2,15 @@ use axum::{
     extract::State,
     http::{header, request::Parts, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
-    response::Response,
-    routing::{get, post},
+    response::{Html, Response},
+    routing::{any, get, post},
     Json, Router,
 };
 use serde::Serialize;
 use sqlx::PgPool;
 use tower_http::{
     cors::{AllowOrigin, CorsLayer},
-    services::{ServeDir, ServeFile},
+    services::ServeDir,
     trace::TraceLayer,
 };
 
@@ -40,8 +40,7 @@ pub fn build_router(config: Config, db: PgPool) -> Router {
     let state = AppState { config, db };
     let frontend_dist =
         std::env::var("FRONTEND_DIST_DIR").unwrap_or_else(|_| "frontend/dist".to_owned());
-    let frontend = ServeDir::new(&frontend_dist)
-        .not_found_service(ServeFile::new(format!("{frontend_dist}/index.html")));
+    let assets = ServeDir::new(format!("{frontend_dist}/assets"));
     let cors = CorsLayer::new()
         .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
         .allow_headers([header::ACCEPT, header::AUTHORIZATION, header::CONTENT_TYPE])
@@ -63,11 +62,28 @@ pub fn build_router(config: Config, db: PgPool) -> Router {
         .route("/api/auth/login", get(auth::login))
         .route("/api/auth/register", post(accounts::register))
         .merge(protected_routes)
-        .fallback_service(frontend)
+        .route("/api/*path", any(api_not_found))
+        .nest_service("/assets", assets)
+        .fallback(get(spa_index))
         .layer(axum::middleware::from_fn(forwarded_host_vary))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+async fn api_not_found() -> StatusCode {
+    StatusCode::NOT_FOUND
+}
+
+async fn spa_index() -> Result<Html<String>, StatusCode> {
+    let frontend_dist =
+        std::env::var("FRONTEND_DIST_DIR").unwrap_or_else(|_| "frontend/dist".to_owned());
+    std::fs::read_to_string(format!("{frontend_dist}/index.html"))
+        .map(Html)
+        .map_err(|err| {
+            tracing::error!("failed to read frontend index.html: {err}");
+            StatusCode::NOT_FOUND
+        })
 }
 
 async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthResponse>) {
